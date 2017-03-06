@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Syncing Data 2</title>
+    <meta charset="utf-8"/>
+    <style>
+      html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding:0;
+      }
+      
+      canvas {
+        margin: 10px;
+        border: 1px solid black;
+      }
+      
+      p {
+        margin-left: 12px;
+        font-size: 1.2em;
+        width: 50%; 
+      }
+    </style>
+    <script src="/socket.io/socket.io.js"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-core/5.8.34/browser.min.js"></script>
+	<script type="text/babel">  
+        "use strict";
+    
+        let canvas;
+        let ctx;
+        //our websocket connection
+        let socket;
+        let id;
+        let moveDown = false;
+        let moveUp = false;
+        let moveRight = false;
+        let moveLeft = false;
+
+        let users = {};
+        
+        const removeUser = (response) => {
+          console.dir(response.data);
+          if (users[response.data.info.id]) {
+            delete users[response.data.info.id];
+          }
+        };
+
+        const addUser = (response) => {
+          console.dir(response);
+          if (response === undefined) {
+            return;
+          }
+          
+          if (!users[response.user.info.id]) {
+            users[response.user.info.id] = response.user;
+          }
+          
+          console.log('The user list is: ');
+          console.dir(users);
+        };
+        
+        const joinRoom = (data) => {
+          console.dir(data);
+          // set the user
+          id = data.self.info.id;
+          users[id] = data.self;
+          
+          // set the other users in the room
+          const keys = Object.keys(data.others);
+          console.dir(keys);
+          for (let i = 0; i < keys.length; i++) {
+            console.log(keys[i]);
+            users[data.others[keys[i]].info.id] = data.others[keys[i]];
+          }
+          
+          console.log('The user list is: ');
+          console.dir(users);
+          
+          requestAnimationFrame(redraw);
+        };
+        
+        const update = (response) => {
+          
+          if (response.info.id === id) {
+            return;
+          }
+          
+          if (users[response.info.id].gameData.lastUpdate >= response.gameData.lastUpdate) {
+            return;
+          }
+          
+          const user = users[response.info.id];
+          user.gameData.a_x = response.gameData.a_x;
+          user.gameData.a_y = response.gameData.a_y;
+          user.gameData.b_x = response.gameData.b_x;
+          user.gameData.b_y = response.gameData.b_y;
+          user.gameData.c_x = response.gameData.c_x;
+          user.gameData.c_y = response.gameData.c_y;
+          user.clientData.alpha = 0.05;
+        };
+        
+        const updatePosition = () => {
+          const self = users[id];
+          
+          self.gameData.c_x = self.gameData.b_x;
+          self.gameData.c_y = self.gameData.b_y;
+          self.gameData.b_x = self.clientData.x;
+          self.gameData.b_y = self.clientData.y;
+          
+          if (moveUp && self.gameData.a_y > 0) {
+            self.gameData.a_y -= 2;
+          }
+          if (moveDown && self.gameData.a_y < 400) {
+            self.gameData.a_y += 2;
+          }
+          if (moveLeft && self.gameData.a_x > 0) {
+            self.gameData.a_x -= 2;
+          }
+          if (moveRight && self.gameData.a_x < 400) {
+            self.gameData.a_x += 2;
+          }
+          
+          self.clientData.alpha = 0.05;
+          
+          socket.emit('moveSend', {info: {id: id}, gameData: users[id].gameData} );
+        };
+
+        const lerp2 = (v0, v1, alpha) => {
+          return (1 - alpha) * v0 + alpha * v1;
+        };
+
+        const lerp3 = (v0, v1, v2, alpha) => {
+          return (1 - alpha) * ((1 - alpha) * v0 + alpha * v1) + ((1 - alpha) * v1 + v2 * alpha) * alpha;
+        };
+        
+        const redraw = (time) => {
+          updatePosition();
+
+          ctx.clearRect(0, 0, 500, 500);
+
+          const keys = Object.keys(users);
+
+          for (let i = 0; i < keys.length; i++) {
+            const user = users[keys[i]];
+            
+            if (user.clientData.alpha < 1) {
+              user.clientData.alpha += 0.05;
+            }
+            
+            ctx.fillStyle = user.info.color;
+            
+            //user.clientData.x = lerp3(user.gameData.c_x, user.gameData.b_x, user.gameData.a_x, user.clientData.alpha);
+            //user.clientData.y = lerp3(user.gameData.c_y, user.gameData.b_y, user.gameData.a_y, user.clientData.alpha);
+            
+            user.clientData.x = lerp2(user.gameData.c_x, user.gameData.a_x, user.clientData.alpha);
+            user.clientData.y = lerp2(user.gameData.c_y, user.gameData.a_y, user.clientData.alpha);
+            ctx.beginPath();
+            ctx.arc(user.clientData.x, user.clientData.y, 50, 0, Math.PI * 2, false);
+            ctx.closePath();
+            ctx.fill();
+          }
+
+          requestAnimationFrame(redraw);
+        };
+        
+        const keyDownHandler = (e) => {
+          var keyPressed = e.which;
+
+          // W OR UP
+          if(keyPressed === 87 || keyPressed === 38) {
+            moveUp = true;
+          }
+          // A OR LEFT
+          else if(keyPressed === 65 || keyPressed === 37) {
+            moveLeft = true;
+          }
+          // S OR DOWN
+          else if(keyPressed === 83 || keyPressed === 40) {
+            moveDown = true;
+          }
+          // D OR RIGHT
+          else if(keyPressed === 68 || keyPressed === 39) {
+            moveRight = true;
+          }
+          
+          e.preventDefault();
+        };
+        
+        const keyUpHandler = (e) => {
+          var keyPressed = e.which;
+
+          // W OR UP
+          if(keyPressed === 87 || keyPressed === 38) {
+            moveUp = false;
+          }
+          // A OR LEFT
+          else if(keyPressed === 65 || keyPressed === 37) {
+            moveLeft = false;
+          }
+          // S OR DOWN
+          else if(keyPressed === 83 || keyPressed === 40) {
+            moveDown = false;
+          }
+          // D OR RIGHT
+          else if(keyPressed === 68 || keyPressed === 39) {
+            moveRight = false;
+          }       
+          
+          e.preventDefault();
+        };
+
+        const sendWithLag = () => {
+          socket.emit('movementUpdate', squares[hash]);
+        };
+
+        const init = () => {
+          canvas = document.querySelector("#canvas");
+          ctx = canvas.getContext("2d");
+
+          socket = io.connect();
+          
+          //socket.emit('join', {});
+
+          socket.on('joinedRoom', joinRoom);
+          
+          socket.on('userJoined', addUser);
+
+          socket.on('userLeft', removeUser);
+
+          socket.on('moveUpdate', update);
+
+          document.body.addEventListener('keydown', keyDownHandler);
+          document.body.addEventListener('keyup', keyUpHandler);
+        };
+
+      window.onload = init;
+    </script>
+</head>
+<body>
+    <canvas id="canvas" height="500" width="500">Please use an HTML 5 browser</canvas>
+</body>
+</html>
